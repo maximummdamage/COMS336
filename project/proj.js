@@ -118,13 +118,10 @@ function positionCamera(portalCamera, globalCamera, portal1Mesh, portal2Mesh) {
  */
 async function renderRecursive(destCamera, sourceCamera, destPortal, sourcePortal, renderTarget, texture, iteration) {
     if (iteration < recursions) {
-        if (keystate[66]) console.log(iteration);
         iteration++;
 
+		// initially position camera
         positionCamera(sourceCamera, destCamera, destPortal, sourcePortal);
-        // hold the position coords of camera before readjustment
-        var pos = new THREE.Vector3()
-        pos.copy(sourceCamera.position);
 
         // set dummy camera
         let cameratemp1 = new THREE.PerspectiveCamera(25, 1.0, 0.1);
@@ -142,8 +139,6 @@ async function renderRecursive(destCamera, sourceCamera, destPortal, sourcePorta
         renderer.copyFramebufferToTexture(vec, texture);
         destPortal.material = new THREE.MeshBasicMaterial({ color: 0xffffff, map: texture });
 
-        if (keystate[66]) console.log(destPortal.material);
-        if (keystate[66]) console.log(texture);
         return;
     }
 }
