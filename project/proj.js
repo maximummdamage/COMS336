@@ -1,501 +1,256 @@
 /**
- * Authors: Maxwell Dupree
- * Demo for Portals
+ * Demo of rendering portals using Three.js
+ * This file follows the same basic structure of:
+ * https://stevekautz.com/cs336f22/examples/threejsexamples/TextureThreejsWithFBO.html
+ * Authors: Maxwell Dupree, Brandon Schumacher
  */
 
-// vertex shader for texture 
-const vTextureShaderSource = `
-uniform mat4 transform;
-attribute vec4 a_Position;
-attribute vec4 a_Color;
-attribute vec2 a_TexCoord;
-varying vec2 fTexCoord;
-varying vec4 fColor;
-void main()
-{
-  // pass through so the value gets interpolated
-  fTexCoord = a_TexCoord;
-  fColor = a_Color;
-  gl_Position = transform * a_Position;
-}`;
+/* ---- GLOBAL CONSTANTS / MACROS ---- */
 
-// fragment shader for texture 
-const fTextureShaderSource = `
-precision mediump float;
-uniform sampler2D sampler;
-varying vec2 fTexCoord;
-varying vec4 fColor;
-void main()
-{
-  // sample from the texture at the interpolated texture coordinate,
-  // use the texture's alpha to blend with given color
-  vec4 texColor = texture2D(sampler, fTexCoord);
-  float alpha = texColor.a;
+const OFFSCREEN_SIZE = 2160;
+const CAMERA_MOVESPEED = 0.25;
 
-  gl_FragColor = (1.0 - alpha) * fColor + alpha * texColor;
-  gl_FragColor.a = 1.0;
-}`;
+/* ---- GLOBAL VARIABLES ---- */
 
-// vertex shader for lighting
-const vLightingShaderSource = `
-uniform mat4 model;
-uniform mat4 view;
-uniform mat4 projection;
-uniform mat3 normalMatrix;
+// demo mode
+var demoMode = 1;
+var recursions = 20;
 
-uniform vec4 lightPosition;
+// cameras
+var camera = new THREE.PerspectiveCamera(25, 1.0, 0.1);
+var cameraP1 = new THREE.PerspectiveCamera(25, 1.0, 0.1);
+var cameraP2 = new THREE.PerspectiveCamera(25, 1.0, 0.1);
+var cameraTD = new THREE.PerspectiveCamera(25, 1.0, 0.1);
 
-attribute vec4 a_Position;
-attribute vec3 a_Normal;
+// portals
+var portal1;
+var portal2;
 
-varying vec3 fL;
-varying vec3 fN;
-varying vec3 fV;
+// key listener
+var keystate = {};
+window.addEventListener("keydown", evt => keystate[evt.keyCode] = true);
+window.addEventListener("keyup", evt => delete keystate[evt.keyCode]);
 
-void main()
-{
-  // convert position to eye coords
-  vec4 positionEye = view * model * a_Position;
+/**
+ * based on https://github.com/mrdoob/three.js/blob/master/examples/jsm/utils/CameraUtils.js
+ * uses Kooima's Generalized Perspective Projection formulation to create 
+ * projection matrix and quaternion for portal camera
+ */
+function frameCorners(camera, bottomLeft, bottomRight, topLeft, estimateViewFrustum = false) {
+    let pa = bottomLeft;
+    let pb = bottomRight;
+    let pc = topLeft;
+    let pe = camera.position;
+    let n = camera.near;
+    let f = camera.far;
 
-  // vector to light
-  vec4 lightEye = view * lightPosition;
-  fL = (lightEye - positionEye).xyz;
+    let _vr = new THREE.Vector3().copy(pb).sub(pa).normalize();
+    let _vu = new THREE.Vector3().copy(pc).sub(pa).normalize();
+    let _vn = new THREE.Vector3().crossVectors(_vr, _vu).normalize();
+    let _va = new THREE.Vector3().copy(pa).sub(pe); // from pe to pa
+    let _vb = new THREE.Vector3().copy(pb).sub(pe); // from pe to pb
+    let _vc = new THREE.Vector3().copy(pc).sub(pe); // from pe to pc
 
-  // transform normal matrix into eye coords
-  fN = normalMatrix * a_Normal;
+    let d = - _va.dot(_vn);	// distance from eye to screen
+    let l = _vr.dot(_va) * n / d; // distance to left screen edge
+    let r = _vr.dot(_vb) * n / d; // distance to right screen edge
+    let b = _vu.dot(_va) * n / d; // distance to bottom screen edge
+    let t = _vu.dot(_vc) * n / d; // distance to top screen edge
 
-  // vector from vertex position toward view point
-  fV = normalize(-(positionEye).xyz);
+    // Set camera rotation to match focal plane to corners' plane
+    let _vec = new THREE.Vector3();
 
-  gl_Position = projection * view * model * a_Position;
-}`;
+    let _quat = new THREE.Quaternion().setFromUnitVectors(_vec.set(0, 1, 0), _vu);
+    //console.log(_quat);
+    camera.quaternion.setFromUnitVectors(_vec.set(0, 0, 1).applyQuaternion(_quat), _vn).multiply(_quat);
 
-// fragment shader for lighting
-const fLightingShaderSource = `
-precision mediump float;
-
-uniform mat3 materialProperties;
-uniform mat3 lightProperties;
-uniform float shininess;
-
-varying vec3 fL;
-varying vec3 fN;
-varying vec3 fV;
-
-void main()
-{
-  // normalize after interpolating
-  vec3 N = normalize(fN);
-  vec3 V = normalize(fV);
-  vec3 L = normalize(fL);
-
-  // reflected vector
-  vec3 R = reflect(-L, N);
-
-  mat3 products = matrixCompMult(lightProperties, materialProperties);
-  vec4 ambientColor = vec4(products[0], 1.0);
-  vec4 diffuseColor = vec4(products[1], 1.0);
-  vec4 specularColor = vec4(products[2], 1.0);
-
-  // Lambert's law, clamp negative values to zero
-  float diffuseFactor = max(0.0, dot(L, N));
-
-  // specular factor from Phong reflection model
-  float specularFactor = pow(max(0.0, dot(V, R)), shininess);
-
-  // add the components together
-  vec4 color = specularColor * specularFactor + diffuseColor * diffuseFactor + ambientColor;
-
-  // usually need to rescale somehow after adding
-  gl_FragColor = color;
-}`;
-
-// vertex shader for color only TODO: remove if unnecessary
-const vColorShaderSource = `
-uniform mat4 transform;
-attribute vec4 a_Position;
-attribute vec4 a_Color;
-varying vec4 color;
-void main()
-{
-  color = a_Color;
-  gl_Position = transform * a_Position;
-}`;
-
-// fragment shader for color only TODO: remove if unecessary
-const fColorShaderSource = `
-precision mediump float;
-varying vec4 color;
-void main()
-{
-  gl_FragColor = color;
-}
-`;
-
-// white light (TODO: currently red) 
-var lightPropElements = new Float32Array([
-    0.2, 0.2, 0.2,
-    0.7, 0.0, 0.0,
-    0.7, 0.0, 0.0
-]);
-
-// fake looking white 
-var matPropElements = new Float32Array([
-    1, 1, 1,
-    1, 1, 1,
-    1, 1, 1
-]);
-var shininess = 20.0;
-
-// vertices for portal 1
-var portalVertices = new Float32Array([
-    -3.0, -3.0, -3.0,
-    3.0, -3.0, -3.0,
-    3.0, 3.0, -3.0,
-    -3.0, -3.0, -3.0,
-    3.0, 3.0, -3.0,
-    -3.0, 3.0, -3.0
-]);
-
-var portalColor = new Float32Array([
-    1.0, 0.0, 0.0, 1.0,
-    1.0, 0.0, 0.0, 1.0,
-    1.0, 0.0, 0.0, 1.0,
-    1.0, 0.0, 0.0, 1.0,
-    1.0, 0.0, 0.0, 1.0,
-    1.0, 0.0, 0.0, 1.0
-])
-
-var portalTexCoords = new Float32Array([
-    0, 0,
-    1, 0,
-    1, 1,
-    0, 0,
-    1, 1,
-    0, 1
-]);
-
-// FBO width and height
-var OFFSCREEN_WIDTH = 256;
-var OFFSCREEN_HEIGHT = 256;
-
-// Code for initializing FBO borrowed directly from teal book example (see chapter 10)
-// Returns a handle to the FBO, with an added attribute called 'texture' which is the
-// associated texture.  Depends on the two constants OFFSCREEN_WIDTH, OFFSCREEN_HEIGHT.
-function initFramebufferObject(gl) {
-    var framebuffer, texture, depthBuffer;
-
-    // Define the error handling function
-    var error = function () {
-        if (framebuffer) gl.deleteFramebuffer(framebuffer);
-        if (texture) gl.deleteTexture(texture);
-        if (depthBuffer) gl.deleteRenderbuffer(depthBuffer);
-        return null;
-    }
-
-    // Create a frame buffer object (FBO)
-    framebuffer = gl.createFramebuffer();
-    if (!framebuffer) {
-        console.log('Failed to create frame buffer object');
-        return error();
-    }
-
-    // Create a texture object and set its size and parameters
-    texture = gl.createTexture(); // Create a texture object
-    if (!texture) {
-        console.log('Failed to create texture object');
-        return error();
-    }
-    gl.bindTexture(gl.TEXTURE_2D, texture); // Bind the object to target
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, OFFSCREEN_WIDTH, OFFSCREEN_HEIGHT, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    framebuffer.texture = texture; // Store the texture object
-
-    // Create a renderbuffer object and Set its size and parameters
-    depthBuffer = gl.createRenderbuffer(); // Create a renderbuffer object
-    if (!depthBuffer) {
-        console.log('Failed to create renderbuffer object');
-        return error();
-    }
-    gl.bindRenderbuffer(gl.RENDERBUFFER, depthBuffer); // Bind the object to target
-    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, OFFSCREEN_WIDTH, OFFSCREEN_HEIGHT);
-
-    // Attach the texture and the renderbuffer object to the FBO
-    gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
-    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depthBuffer);
-
-    // Check if FBO is configured correctly
-    var e = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
-    if (gl.FRAMEBUFFER_COMPLETE !== e) {
-        console.log('Frame buffer object is incomplete: ' + e.toString());
-        return error();
-    }
-
-    // Unbind the buffer object
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.bindTexture(gl.TEXTURE_2D, null);
-    gl.bindRenderbuffer(gl.RENDERBUFFER, null);
-
-    return framebuffer;
+    // set off-axis projection matrix to match corners
+    camera.projectionMatrix.set(2.0 * n / (r - l), 0.0,
+        (r + l) / (r - l), 0.0, 0.0,
+        2.0 * n / (t - b),
+        (t + b) / (t - b), 0.0, 0.0, 0.0,
+        (f + n) / (n - f),
+        2.0 * f * n / (n - f), 0.0, 0.0, - 1.0, 0.0);
+    camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
 }
 
-/* -- global variables -- */
+/**
+ * based on function from: https://threejs.org/examples/?q=portal#webgl_portal
+ * sets portal camera position, rotation, and projection matrix for rendering
+ */
+function positionCamera(portalCamera, portal1Mesh, portal2Mesh) {
+    // reflect portal camera about portal plane
+    var reflected = new THREE.Vector3();
+    portal1Mesh.worldToLocal(reflected.copy(camera.position));
+    reflected.x = reflected.x * -1.0;
+    reflected.z = reflected.z * -1.0;
+    portal2Mesh.localToWorld(reflected);
+    portalCamera.position.copy(reflected);
 
-// OpenGL context
-var gl;
+    // get corners of portal being rendered to for Kooima's
+    var vertexArray = portal2Mesh.geometry.getAttribute('position');
+    var topLeft = new THREE.Vector3();
+    var bottomLeft = new THREE.Vector3();
+    var bottomRight = new THREE.Vector3();
+    portal2Mesh.localToWorld(topLeft.fromBufferAttribute(vertexArray, 1));
+    portal2Mesh.localToWorld(bottomLeft.fromBufferAttribute(vertexArray, 3));
+    portal2Mesh.localToWorld(bottomRight.fromBufferAttribute(vertexArray, 2));
 
-// framebuffer and associated texture
-var fbo;
-
-// handle for model
-var theModel;
-
-theModel = getModelData(new THREE.BoxGeometry(1, 1, 1));
-var modelScale = new THREE.Matrix4();
-
-// handle to buffer on GPU TODO
-var vertexBuffer;
-var vertexNormalBuffer;
-var vertexColorBuffer;
-
-var portalVertexBuffer;
-var portalColorBuffer;
-
-// handle to compiled shader on GPU TODO
-
-// transformation matrices
-var model = new THREE.Matrix4();
-
-// animation globals
-var paused = false;
-
-// camera instead of view & projection
-var camera = new Camera(30, 1.0);
-
-//translate keypress events to strings
-//from http://javascript.info/tutorial/keyboard-events
-function getChar(event) {
-    if (event.which == null) {
-        return String.fromCharCode(event.keyCode) // IE
-    } else if (event.which != 0 && event.charCode != 0) {
-        return String.fromCharCode(event.which)   // the rest
-    } else {
-        return null // special key
-    }
+    // Kooima's
+    frameCorners(portalCamera, bottomLeft, bottomRight, topLeft);
 }
 
-// handle keypresses TODO
-function handleKeyPress(event) {
-    var ch = getChar(event);
-    if (camera.keyControl(ch)) return false;
-
-    switch (ch) {
-    }
-}
-
-// draw function TODO: consolidate code from both draw functions into this one, if repeat code occurs
-function draw(useTexture) {
-    return;
-}
-
-// code for rendering to FBO TODO
-function drawToFbo() {
-    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-    gl.viewport(0, 0, OFFSCREEN_WIDTH, OFFSCREEN_HEIGHT);
-    gl.enable(gl.DEPTH_TEST);
-
-    // set background to particular color
-    gl.clearColor(1.0, 1.0, 1.0, 1.0);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-    gl.useProgram(textureShader);
-
-    // get index for a_Position, a_Color, and a_TexCoord
-    var positionIndex = gl.getAttribLocation(textureShader, 'a_Position');
-    if (positionIndex < 0) {
-        console.log('Failed to get the storage location of a_Position');
-        return;
-    }
-    gl.enableVertexAttribArray(positionIndex);
-    gl.bindBuffer(gl.ARRAY_BUFFER, portalVertexBuffer);
-    gl.vertexAttribPointer(positionIndex, 3, gl.FLOAT, false, 0, 0);
-
-    var colorIndex = gl.getAttribLocation(textureShader, 'a_Color');
-    if (colorIndex < 0) {
-        console.log('Failed to get the storage location of a_');
-        return;
-    }
-    gl.enableVertexAttribArray(colorIndex);
-    gl.bindBuffer(gl.ARRAY_BUFFER, portalColorBuffer);
-    gl.vertexAttribPointer(colorIndex, 4, gl.FLOAT, false, 0, 0);
-
-    var texCoordIndex = gl.getAttribLocation(textureShader, 'a_TexCoord');
-    if (texCoordIndex < 0) {
-        console.log('Failed to get the storage location of a_TexCoord');
-        return;
-    }
-    gl.enableVertexAttribArray(texCoordIndex);
-    gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
-    gl.vertexAttribPointer(texCoordIndex, 2, gl.FLOAT, false, 0, 0);
-
-    gl.bindBuffer(gl.ARRAY_BUFFER, null);
-
-    // bind texture object to target
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, fbo.texture);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-
-    // sampler value in shader set to index for texture unit
-    var loc = gl.getUniformLocation(textureShader, 'sampler');
-    gl.uniform1i(loc, 0);
-
-    // set uniform for projection * view
-    var projection = camera.getProjection();
-    var view = camera.getView();
-    var transform = new THREE.Matrix4().multiply(projection).multiply(view);
-    var transformLoc = gl.getUniformLocation(textureShader, 'transform');
-    gl.uniformMatrix4fv(transformLoc, false, transform.elements);
-    gl.drawArrays(gl.triangles, 0, 6);
-
-    // unbind and disable things
-    gl.bindBuffer(gl.ARRAY_BUFFER, null);
-    gl.disableVertexAttribArray(positionIndex);
-    gl.disableVertexAttribArray(texCoordIndex);
-    gl.useProgram(null);
-}
-
-// code to draw to screen TODO
-function drawToScreen() {
-    // bind correct framebuffer
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.viewport(0, 0, 600, 600);
-    gl.enable(gl.DEPTH_TEST);
-
-    gl.clearColor(0.0, 0.9, 0.9, 1.0);
-    //gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-    // bind the shader
-    gl.useProgram(lightingShader);
-
-    // get index for a_Position attribute
-    var positionIndex = gl.getAttribLocation(lightingShader, 'a_Position');
-    if (positionIndex < 0) {
-        console.log("Failed to get location of a_Position");
-        return;
-    }
-
-    var normalIndex = gl.getAttribLocation(lightingShader, 'a_Normal');
-    if (normalIndex < 0) {
-        console.log("Failed to get location of a_Normal");
-        return;
-    }
-
-    // enable a_position and a_normal
-    gl.enableVertexAttribArray(positionIndex);
-    gl.enableVertexAttribArray(normalIndex);
-
-    // bind buffers for points
-    gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
-    gl.vertexAttribPointer(positionIndex, 3, gl.FLOAT, false, 0, 0);
-    gl.bindBuffer(gl.ARRAY_BUFFER, vertexNormalBuffer);
-    gl.vertexAttribPointer(normalIndex, 3, gl.FLOAT, false, 0, 0);
-    gl.bindBuffer(gl.ARRAY_BUFFER, null);
-
-    // set uniform in shader for projection * view * model transformation
-    var loc = gl.getUniformLocation(lightingShader, 'model');
-    gl.uniformMatrix4fv(loc, false, model.elements);
-    loc = gl.getUniformLocation(lightingShader, 'view');
-    gl.uniformMatrix4fv(loc, false, camera.getView().elements);
-    loc = gl.getUniformLocation(lightingShader, 'projection');
-    gl.uniformMatrix4fv(loc, false, camera.getProjection().elements);
-    loc = gl.getUniformLocation(lightingShader, 'normalMatrix');
-    gl.uniformMatrix3fv(loc, false, makeNormalMatrixElements(model, camera.getView()));
-
-    // light and material properties
-    loc = gl.getUniformLocation(lightingShader, 'materialProperties');
-    gl.uniformMatrix3fv(loc, false, matPropElements);
-    loc = gl.getUniformLocation(lightingShader, 'shininess');
-    gl.uniform1f(loc, shininess);
-
-    // light information
-    loc = gl.getUniformLocation(lightingShader, 'lightPosition');
-    gl.uniform4f(loc, 2.0, 4.0, 2.0, 1.0);
-    loc = gl.getUniformLocation(lightingShader, 'lightProperties');
-    gl.uniformMatrix3fv(loc, false, lightPropElements);
-
-    // draw
-    gl.drawArrays(gl.TRIANGLES, 0, theModel.numVertices);
-
-    // below code draws portal as a wall behind object, TODO: remove when not needed for testing
-    //// bind buffers for new points
-    //gl.bindBuffer(gl.ARRAY_BUFFER, portalVertexBuffer);
-    //gl.vertexAttribPointer(positionIndex, 3, gl.FLOAT, false, 0, 0);
-    //
-    //// update uniform in shader for model
-    //loc = gl.getUniformLocation(lightingShader, 'model');
-    //gl.uniformMatrix4fv(loc, false, new THREE.Matrix4().elements);
-    //loc = gl.getUniformLocation(lightingShader, 'normalMatrix');
-    //gl.uniformMatrix3fv(loc, false, makeNormalMatrixElements(new THREE.Matrix4(), camera.getView()));
-    //
-    //gl.drawArrays(gl.TRIANGLES, 0, 6);
-
-    // disable things
-    gl.disableVertexAttribArray(positionIndex);
-    gl.disableVertexAttribArray(normalIndex);
-    gl.useProgram(null);
-}
-
-// entry point
+// entry point when page is loaded
 function main() {
-    // key handlers
-    window.onkeypress = handleKeyPress;
 
-    // get graphics context
-    gl = getGraphicsContext("theCanvas");
+    // get canvas and renderer handles
+    var canvas = document.getElementById('theCanvas');
+    var renderer = new THREE.WebGLRenderer({ canvas: canvas });
 
-    // load and compile shaders TODO: shader for textures
-    lightingShader = createShaderProgram(gl, vLightingShaderSource, fLightingShaderSource);
-    colorShader = createShaderProgram(gl, vColorShaderSource, fColorShaderSource);
-    textureShader = createShaderProgram(gl, vTextureShaderSource, fTextureShaderSource);
+    // create FBO and set texture parameters
+    var texPortal1 = new THREE.WebGLRenderTarget(OFFSCREEN_SIZE, OFFSCREEN_SIZE);
+    var texPortal2 = new THREE.WebGLRenderTarget(OFFSCREEN_SIZE, OFFSCREEN_SIZE);
 
-    // create the FBO and associated texture
-    fbo = initFramebufferObject(gl);
+    // set up scene geometry
+    var scene = new THREE.Scene();
 
-    // load vertex data into GPU memory TODO if necessary
-    vertexBuffer = createAndLoadBuffer(theModel.vertices);
+    var cubeDummy = new THREE.Object3D();
+    var cube = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: 0xdc143c }));
+    cubeDummy.add(cube);
 
-    // load vertex normal data
-    vertexNormalBuffer = createAndLoadBuffer(theModel.vertexNormals);
+    var floor = new THREE.Mesh(new THREE.BoxGeometry(12, 0.2, 12), new THREE.MeshBasicMaterial({ color: 0xff7f50 }));
+    floor.translateY(-3);
 
-    // load portal vertex data
-    portalVertexBuffer = createAndLoadBuffer(portalVertices);
+    var c1 = new THREE.Mesh(new THREE.BoxGeometry(2, 0.2, 2), new THREE.MeshBasicMaterial({ color: 0x00ffcc }));
+    c1.translateX(-4); c1.translateZ(-4); c1.translateY(-2.8);
 
-    // load colorbuffer TODO remove this if unnecessary
-    portalColorBuffer = createAndLoadBuffer(portalColor);
+    var c2 = new THREE.Mesh(new THREE.BoxGeometry(2, 0.2, 2), new THREE.MeshBasicMaterial({ color: 0x0000ff }));
+    c2.translateX(4); c2.translateZ(4); c2.translateY(-2.8);
 
-    // buffer for texture coords TODO
-    texCoordBuffer = createAndLoadBuffer(portalTexCoords);
+    var c3 = new THREE.Mesh(new THREE.BoxGeometry(2, 0.2, 2), new THREE.MeshBasicMaterial({ color: 0xffc0cb }));
+    c3.translateX(4); c3.translateZ(-4); c3.translateY(-2.8);
 
-    // specify fill color for clearing framebuffer
-    gl.clearColor(0.0, 0.9, 0.9, 1.0);
+    var wallN = new THREE.Mesh(new THREE.PlaneGeometry(12, 12), new THREE.MeshBasicMaterial({ color: 0x556b2f }));
+    var wallE = new THREE.Mesh(new THREE.PlaneGeometry(12, 12), new THREE.MeshBasicMaterial({ color: 0x008b8b }));
+    var wallS = new THREE.Mesh(new THREE.PlaneGeometry(12, 12), new THREE.MeshBasicMaterial({ color: 0xcd5c5c }));
+    var wallW = new THREE.Mesh(new THREE.PlaneGeometry(12, 12), new THREE.MeshBasicMaterial({ color: 0xf4a460 }));
 
-    gl.enable(gl.DEPTH_TEST);
+    wallN.translateZ(-6);
+    wallE.rotateY(toRadians(-90));
+    wallE.translateZ(-6);
+    wallS.rotateY(toRadians(180));
+    wallS.translateZ(-6);
+    wallW.rotateY(toRadians(90));
+    wallW.translateZ(-6);
 
-    // define an animation loop
+    scene.add(c1);
+    scene.add(c2);
+    scene.add(c3);
+    scene.add(cubeDummy);
+    scene.add(floor);
+    scene.add(wallN);
+    scene.add(wallE);
+    scene.add(wallS);
+    scene.add(wallW);
+
+    // set up portal geometry
+    var portalGeometry1 = new THREE.PlaneGeometry(5, 5);
+    var portalGeometry2 = new THREE.PlaneGeometry(5, 5);
+    //var portalGeometry2 = new THREE.PlaneGeometry(2, 5);
+    //var portalGeometry2 = new THREE.PlaneGeometry(10, 5);
+    portal1 = new THREE.Mesh(portalGeometry1, new THREE.MeshBasicMaterial({ color: 0xffffff, map: texPortal1.texture }));
+    portal2 = new THREE.Mesh(portalGeometry2, new THREE.MeshBasicMaterial({ color: 0xffffff, map: texPortal2.texture }));
+
+    // add cameras to their portals
+    portal1.add(cameraP2);
+    portal2.add(cameraP1);
+
+    // position portals
+    portal1.translateZ(-5.99);
+
+    portal2.rotateY(toRadians(90));
+    //portal2.rotateY(toRadians(180));
+    portal2.translateZ(-5.99);
+
+    scene.add(portal1);
+    scene.add(portal2);
+
+    // position cameras
+    cameraTD.position.y = 100;
+    cameraTD.lookAt(new THREE.Vector3(0, 0, 0));
+
+    camera.position.z = 5;
+    camera.lookAt(new THREE.Vector3(0, 0, 0));
+
+    // add boxes to cameras for top down view
+    //camera.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: 0xbfc0c0 })));
+    //cameraP1.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: 0x00ff00 })));
+    //cameraP2.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: 0x0000ff })));
+
+    scene.add(camera);
+    scene.add(cameraP1);
+    scene.add(cameraP2);
+
+    // set variables for animation function
+
     var animate = function () {
-        drawToFbo();
-        drawToScreen();
+        renderer.setClearColor(0x00cccc);
 
-        // model animation here
-        model = new THREE.Matrix4().makeRotationY(toRadians(0.5)).multiply(model);
-        model = new THREE.Matrix4().makeRotationZ(toRadians(0.7)).multiply(model);
+        // switch demo mode
+        if (keystate[49]) demoMode = 1;
+        if (keystate[50]) demoMode = 2;
+        if (keystate[51]) demoMode = 3;
 
-        // request that browser calls animate() asap
+        // camera controls
+        var mz = (keystate[87] ? 1 : 0) - (keystate[83] ? 1 : 0);
+        var mx = (keystate[68] ? 1 : 0) - (keystate[65] ? 1 : 0);
+        var my = (keystate[32] ? 1 : 0) - (keystate[16] ? 1 : 0);
+        var ry = (keystate[81] ? 1 : 0) - (keystate[69] ? 1 : 0);
+        var rz = (keystate[37] ? 1 : 0) - (keystate[39] ? 1 : 0);
+        var rx = (keystate[38] ? 1 : 0) - (keystate[40] ? 1 : 0);
+        camera.translateZ(-mz * CAMERA_MOVESPEED);
+        camera.translateX(mx * CAMERA_MOVESPEED);
+        camera.translateY(my * 0.5 * CAMERA_MOVESPEED);
+        camera.rotateY(toRadians(ry));
+        camera.rotateZ(toRadians(rz));
+        camera.rotateX(toRadians(rx));
+
+        // rotate cube
+        cube.rotateX(toRadians(0.6));
+        cube.rotateY(toRadians(0.7));
+        cube.rotateZ(toRadians(0.5));
+        cubeDummy.position.set(0, 0, 0);
+        cubeDummy.rotateY(toRadians(1));
+        cubeDummy.translateZ(-1);
+        
+
+        // set clear color
+        renderer.setClearColor(0x444444);
+
+        // position cameras
+        positionCamera(cameraP2, portal1, portal2);
+        positionCamera(cameraP1, portal2, portal1);
+
+        // render to portal 1
+        renderer.setRenderTarget(texPortal1);
+        renderer.render(scene, cameraP2);
+
+        // render to portal 2
+        renderer.setRenderTarget(texPortal2);
+        renderer.render(scene, cameraP1);
+
+        // render to canvas
+        renderer.setRenderTarget(null);
+        if (demoMode == 2) {
+            renderer.render(scene, cameraTD);
+        } else {
+            renderer.render(scene, camera);
+        }
+
+        // request animation frame asap
         requestAnimationFrame(animate);
-    };
+    }
 
-    // start drawing
+    // draw!
     animate();
 }

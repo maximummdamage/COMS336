@@ -227,12 +227,12 @@ function main() {
         var camPos = new THREE.Vector3();
         camera.getWorldPosition(camPos);
         var CPSS = portal1.worldToLocal(camPos);
-        var CRSS = portal1.quaternion.clone().invert().multiply(camera.quaternion);
+        //var CRSS = portal1.quaternion.clone().invert().multiply(camera.quaternion);
         var CPDS = portal2.localToWorld(CPSS);
         cameraPortal2.position.set(CPDS.z, CPDS.y, -CPDS.x);
-        var CRDS = portal2.quaternion.clone().multiply(CRSS);
-        cameraPortal2.quaternion.set(CRDS.x, CRDS.y, CRDS.z, CRDS.w);
-        cameraPortal2.rotateY(-3.14 + toRadians(-90));
+        //var CRDS = portal2.quaternion.clone().multiply(CRSS);
+        //cameraPortal2.quaternion.set(CRDS.x, CRDS.y, CRDS.z, CRDS.w);
+        //cameraPortal2.rotateY(-3.14 + toRadians(-90));
 
 		var positionArray = portal1.geometry.getAttribute('position')
 		var vertex1 = new THREE.Vector3();

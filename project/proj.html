@@ -12,13 +12,17 @@ Authors: Maxwell Dupree,
 </head>
 
 <body>
-    <canvas id="theCanvas" width="600" height="600">
+    <canvas id="theCanvas" width="800" height="800">
         Use a browser that supports "canvas"
     </canvas>
 
     <!-- TODO: add list of keyboard controls here -->
     <p>
         Keyboard Controls:
+        <li>w, a, s, d, shift, space - translate camera</li>
+        <li>q, e, arrow keys - rotate camera</li>
+        <li>1 - first person view</li>
+        <li>2 - top down view</li>
     </p>
 
     <script src="../three/three.js"></script>
@@ -28,7 +32,7 @@ Authors: Maxwell Dupree,
     <script src="../hierarchy/Camera.js"></script>
 
 
-    <script src="proj-three.js"></script>
+    <script src="proj.js"></script>
     <script>window.onload = main</script>
 </body>
 </html>
