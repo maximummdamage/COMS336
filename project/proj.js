@@ -92,6 +92,7 @@ function positionCamera(portalCamera, portal1Mesh, portal2Mesh) {
     var topLeft = new THREE.Vector3();
     var bottomLeft = new THREE.Vector3();
     var bottomRight = new THREE.Vector3();
+	// give corners to Kooima's **mirrored**
     portal2Mesh.localToWorld(topLeft.fromBufferAttribute(vertexArray, 1));
     portal2Mesh.localToWorld(bottomLeft.fromBufferAttribute(vertexArray, 3));
     portal2Mesh.localToWorld(bottomRight.fromBufferAttribute(vertexArray, 2));
