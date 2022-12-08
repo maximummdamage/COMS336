@@ -114,7 +114,23 @@ function positionCamera(portalCamera, globalCamera, portal1Mesh, portal2Mesh) {
 }
 
 /**
- * render portals recursively
+ * This function recursively renders the scene, moving the camera to
+ * different points so that the portals within portals render correctly
+ * 
+ * @param {THREE.PerspectiveCamera} destCamera 
+ *      the camera which will see the texture rendered on the destination portal
+ * @param {THREE.PerspectiveCamera} sourceCamera 
+ *      the camera which will be used to render to the destination portal
+ * @param {THREE.Mesh} destPortal 
+ *      the portal that will have a texture rendered to it
+ * @param {THREE.Mesh} sourcePortal 
+ *      the portal that will be "seen through" by sourceCamera
+ * @param {THREE.WebGLRenderTarget} renderTarget 
+ *      Offscreen Buffer to render to
+ * @param {THREE.texture} texture 
+ *      Texture handle to be rendered to destination portal
+ * @param {int} iteration 
+ *      how many recursions deep are we?
  */
 async function renderRecursive(destCamera, sourceCamera, destPortal, sourcePortal, renderTarget, texture, iteration) {
     if (iteration < recursions) {
